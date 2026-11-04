@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "upstreamRepository": "microsoft/winget-pkgs",
+  "upstreamRef": "master",
+  "upstreamCommit": "97d6aa2689f0a05f7847653a62b8624720d15b5d"
+}
