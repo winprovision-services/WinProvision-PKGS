@@ -1,0 +1,45 @@
+name: Sync WinGet manifests
+
+on:
+  schedule:
+    - cron: "17 */3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: winget-pkgs-manifest-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Check out workflow and synchronizer
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 1
+          filter: blob:none
+          persist-credentials: true
+
+      - name: Set up Python and cache dependencies
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/requirements-sync.txt
+
+      - name: Install synchronizer dependency
+        run: python -m pip install -r scripts/requirements-sync.txt
+
+      - name: Apply upstream diff to manifests branch
+        env:
+          CATALOG_BRANCH: manifests
+          UPSTREAM_REPOSITORY: microsoft/winget-pkgs
+          UPSTREAM_REF: master
+          MAX_UPSTREAM_COMMITS_PER_RUN: "500"
+        run: python scripts/sync_winget_pkgs.py
