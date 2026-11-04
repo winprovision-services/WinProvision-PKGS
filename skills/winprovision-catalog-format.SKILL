@@ -1,0 +1,282 @@
+---
+name: winprovision-catalog-format
+description: Padrão oficial do catálogo WinProvision Store (CDN/R2), espelhado na estrutura do winget-pkgs. Use ao gerar, validar, migrar ou consumir os JSONs de produto e versão, ou ao implementar Indexer, Worker, cliente, schemas e testes do catálogo.
+---
+
+# Padrão do catálogo WinProvision
+
+Este documento define o contrato dos JSON publicados em `winget/v1/manifests`. O WinGet PKGS é a referência para caminhos e validação de identificadores; os JSON e campos derivados aqui definidos são uma projeção própria do WinProvision. O WinGet PKGS armazena manifests YAML, em geral separados em versão, localidade e instalador.
+
+Se código ou exemplos divergirem, este contrato prevalece. Se uma regra aqui estiver incompleta, pare e informe a pessoa; não invente outra convenção.
+
+## 1. Caminhos
+
+Base: `https://cdn.winprovisionstore.com.br/winget/v1/manifests/`
+
+```text
+{base}/{partição}/{segmentos-do-id}/app.json
+{base}/{partição}/{segmentos-do-id}/versions/{versão-codificada}/app.json
+{base}/{partição}/{segmentos-do-id}/media/icon.{sha8}.{ext}
+{base}/{partição}/{segmentos-do-id}/media/screenshots/{arquivo}
+```
+
+Exemplos:
+
+```text
+7zip.7zip                         → 7/7zip/7zip/app.json
+7zip.7zip, versão 26.05           → 7/7zip/7zip/versions/26.05/app.json
+Microsoft.VisualStudio.2022.Community
+                                  → m/Microsoft/VisualStudio/2022/Community/app.json
+```
+
+Regras:
+
+1. A partição inicial é o primeiro caractere do ID em minúsculas. Para `0-9` e `a-z`, use a pasta correspondente. Para outro caractere, use `_`.
+2. Em seguida, crie um nível de diretório por segmento do ID, separado por ponto, preservando a caixa.
+3. Codifique cada segmento em UTF-8 com percent-encoding de caminho de segmento; não normalize caixa nem Unicode.
+4. A versão é um único segmento e também é percent-encoded.
+5. Todo caminho dentro do JSON é relativo ao diretório do produto. Use apenas `/`; não use barra inicial, `\\`, URL absoluta, nem segmentos `.` ou `..`.
+6. O Indexer, Worker e clientes usam a mesma implementação da função de validação e derivação do caminho.
+
+O R2 diferencia maiúsculas e minúsculas. Preserve a grafia exata do PackageIdentifier upstream.
+
+## 2. Validação de ID e versão
+
+Use as restrições do schema oficial atual do WinGet:
+
+- ID: de 2 a 8 segmentos separados por ponto.
+- Cada segmento: 1 a 32 caracteres; ID total: até 128 caracteres.
+- Rejeite segmentos vazios, espaços em branco, caracteres de controle e `\\ / : * ? " < > |`.
+- Os demais caracteres, inclusive não ASCII, são aceitos pelo schema.
+- Versão: string de até 128 caracteres; rejeite controles e `\\ / : * ? " < > |`. Espaço, `#` e `%` são permitidos e devem ser codificados no caminho.
+- Não converta versões em números.
+
+O Indexer valida a correspondência exata de caixa entre ID, versão e caminho. Ids são únicos por `source + id). Nesta versão, `source` é apenas `winget`; adicionar outra origem requer uma regra de isolamento de caminho antes da publicação para evitar colisões.
+
+Mantenha vetores de teste compartilhados (`id-paths.json`) para IDs válidos, inválidos por cada motivo, Unicode e versões com espaço, `#` e `%`. Rode os vetores no CI para cada implementação.
+
+## 3. Serialização e hashes
+
+Os JSON publicados são UTF-8 sem BOM, minificados, sem newline final, com chaves de objetos em ordem ordinal crescente. A ordem de arrays é definida neste contrato. Um único serializador canônico do Indexer produz os bytes.
+
+Hashes são SHA-256 hexadecimal minúsculos com 64 caracteres:
+
+- `versions[].detailSha256`: bytes exatos do JSON de versão apontado por `detailPath`.
+- `installers[].sha256`: bytes do instalador apontado por `url`.
+- `media.*[].sha256`: bytes do arquivo de mídia apontado por `path`.
+- `upstream.manifests[].sha256`: bytes exatos de cada arquivo upstream no commit registrado.
+
+O cliente valida `detailSha256` sobre os bytes baixados antes do parse; nunca reserialize para conferir hash. O Indexer calcula hashes depois de serializar o conteúdo final.
+
+Não inclua horário de geração nos JSON. O horário de sincronização pertence ao ponteiro/índice raiz, fora deste contrato.
+
+## 4. JSON de produto: `app.json`
+
+Exemplo representativo; preserve todos os metadados disponíveis, inclusive homepage, packageUrl, tags, ícones e screenshots.
+
+```json
+{
+  "schemaVersion": 1,
+  "source": "winget",
+  "id": "7zip.7zip",
+  "package": {
+    "name": "7-Zip",
+    "publisher": "Igor Pavlov",
+    "moniker": "7zip",
+    "description": "A file archiver with a high compression ratio.",
+    "homepage": "https://7-zip.org/download.html",
+    "packageUrl": "https://7-zip.org/download.html",
+    "license": "LGPL-2.1",
+    "locale": "en-US",
+    "tags": ["7zfiles", "archive", "archiver", "compress", "compression", "decompress", "decompression", "extract", "extractor", "rarfiles", "targzfiles", "unarchive", "unarchiver", "unzip", "zip"]
+  },
+  "catalog": {
+    "score": 71,
+    "scoreVersion": 1
+  },
+  "latestVersion": "26.05",
+  "architectures": ["arm", "arm64", "x64", "x86"],
+  "media": {
+    "icons": [
+      {
+        "path": "media/icon.2f24565b.png",
+        "mimeType": "image/png",
+        "sha256": "2f24565bb61692a51db0a6bf433be09bb3f9c33ee10594f8e27253b30e8d28ab",
+        "source": "winget-legacy",
+        "priority": 1
+      }
+    ],
+    "screenshots": [
+      {
+        "path": "media/screenshots/01-legacy-winget-7cae0d8d1479.jpg",
+        "mimeType": "image/jpeg",
+        "sha256": "7cae0d8d1479e208e53077335d11a7ed5203313795235b3ec1618114cda09a53"
+      },
+      {
+        "path": "media/screenshots/02-legacy-winget-f35baedc9cda.png",
+        "mimeType": "image/png",
+        "sha256": "f35baedc9cda2290793291b6ebe1ff550325fe296f89369c66d478e6b861a8ca"
+      }
+    ]
+  },
+  "versions": [
+    {
+      "version": "26.05",
+      "releaseDate": "2026-05-14",
+      "releaseDateSource": "manifest",
+      "architectures": ["arm", "arm64", "x64", "x86"],
+      "detailPath": "versions/26.05/app.json",
+      "detailSha256": "<sha256 dos bytes publicados>"
+    }
+  ]
+}
+```
+
+Obrigatórios: `schemaVersion`, `source`, `id`, `package.name`, `package.publisher`, `latestVersion`, `versions` (ao menos um item).
+
+`versions` é ordenado pelo Indexer, da mais nova para a mais antiga. `latestVersion` é sempre `versions[0].version). O cliente não interpreta as strings para reordenar.
+
+O Indexer ordena com o comparador de versões do WinGet. Se o comparador resultar em igualdade ou desconhecido, desempata por data de lançamento decrescente e depois pela string `version` em ordem ordinal crescente; versões sem data ficam depois das que têm data. Cubra versões com letras e hotfixes em vetores de regressão.
+
+`architectures` do produto é a união das arquiteturas dos instaladores das versões disponíveis. É derivado e nunca editado à mão.
+
+`catalog.score` é calculado pelo Indexer. `scoreVersion` identifica a fórmula; altere-o e recalcule os produtos quando a fórmula mudar.
+
+Os arrays definidos no formato estão sempre presentes. Se não houver elementos, use `[]). Vazio significa nenhum; campo escalar ausente significa desconhecido/não informado. Nunca use `null` para representar ausência.
+
+## 5. JSON de versão: `versions/{versão}/app.json`
+
+```json
+{
+  "schemaVersion": 1,
+  "source": "winget",
+  "id": "7zip.7zip",
+  "version": "26.05",
+  "releaseDate": "2026-05-14",
+  "releaseDateSource": "manifest",
+  "licenseUrl": "https://7-zip.org/license.txt",
+  "publisherUrl": "https://7-zip.org/",
+  "releaseNotesUrl": "https://github.com/ip7z/7zip/releases/tag/26.05",
+  "installers": [
+    {
+      "id": "x64-machine-exe",
+      "priority": 1,
+      "architecture": "x64",
+      "scope": "machine",
+      "type": "exe",
+      "url": "https://github.com/ip7z/7zip/releases/download/26.05/7z2605-x64.exe",
+      "sha256": "fd99e86f57d8f429ef5ed045bf98315af962e2309b0f1ba87a147a44c71647d0",
+      "silent": {
+        "arguments": "/S",
+        "source": "manifest"
+      },
+      "elevation": {
+        "requirement": "elevationRequired",
+        "source": "inferred"
+      },
+      "uninstall": {
+        "type": "registryKey",
+        "value": "7-Zip"
+      },
+      "successCodes": [],
+      "dependencies": []
+    }
+  ],
+  "upstream": {
+    "repository": "microsoft/winget-pkgs",
+    "commit": "65b171aa1ef1aacbdd092c06ad93355cb338441f",
+    "manifestVersion": "1.12.0",
+    "manifests": [
+      {
+        "path": "manifests/7/7zip/7zip/26.05/7zip.7zip.yaml",
+        "sha256": "<sha256 do YAML original>"
+      },
+      {
+        "path": "manifests/7/7zip/7zip/26.05/7zip.7zip.installer.yaml",
+        "sha256": "<sha256 do YAML original>"
+      },
+      {
+        "path": "manifests/7/7zip/7zip/26.05/7zip.7zip.locale.en-US.yaml",
+        "sha256": "<sha256 do YAML original>"
+      }
+    ]
+  }
+}
+```
+
+Os nomes/caminhos em `upstream.manifests` são ilustrativos; registre os arquivos realmente consumidos no commit indicado.
+
+Obrigatórios na versão: `schemaVersion`, `source`, `id`, `version`, `installers` (ao menos um). Obrigatórios em cada instalador: `id`, `priority`, `architecture`, `type`, `url`, `sha256`.
+
+Regras dos instaladores:
+
+- `id` deriva de `{architecture}-{scope}-{type}). Sem scope, use `{architecture}-{type}). Duplicatas recebem sufixos `-2`, `-3` em uma ordem determinística.
+- O cliente filtra por arquitetura e escopo aplicáveis e escolhe o instalador de menor `priority). A prioridade é calculada pelo Indexer, não pela ordem do array.
+- Prioridades padrão: `exe`, `inno`, `nullsoft`, `burn` = 1; `wix`, `msi` = 2; `msix`, `appx` = 3; `portable`, `zip` = 4. Overrides podem mudar isso.
+- `type) usa minúsculas: `exe`, `inno`, `nullsoft`, `wix`, `msi`, `msix`, `appx`, `burn`, `portable`, `zip), `pwa`.
+- `architecture): `arm`, `arm64`, `x64`, `x86), `neutral). `scope): `machine), `user); omita quando não declarado.
+- `silent.arguments) ausente significa que não há modo silencioso conhecido. Não use `silent.supported).
+- `elevation.requirement): `elevationRequired`, `elevationProhibited`, `elevatesSelf), `unknown). Para scope machine sem declaração, o Indexer pode inferir `elevationRequired), registrando `source: "inferred").
+- `uninstall.type): `registryKey), `productCode) (GUID MSI) ou `packageFamilyName) (MSIX). Sem dado, omita `uninstall). Não use `productCode) solto.
+- `size) (bytes) é opcional e só aparece quando conhecido.
+- `successCodes) sempre está presente; vazio significa nenhum código extra além de zero.
+- `dependencies) sempre está presente; vazio significa que o manifesto não declara dependências.
+
+## 6. Fonte, projeções e publicação
+
+Fonte autoritativa e cópias derivadas:
+
+| Dado | Fonte | Projeção |
+|---|---|---|
+| Instaladores/arquiteturas | JSON da versão | arquiteturas em versions[] e no produto |
+| releaseDate | JSON da versão | versions[].releaseDate/source |
+| latestVersion | ordenação Indexer | latestVersion e primeiro item de versions |
+| detailSha256 | bytes publicados do detalhe | versions[].detailSha256 |
+| catalog.* | cálculo Indexer | produto |
+
+O Indexer regenera projeções a cada escrita. Publique nesta ordem: arquivos de versão, JSON do produto, ponteiro/índice raiz. Assim, o produto não referencia detalhes inexistentes.
+
+Release date: use a data do manifesto original; se não existir, use a data do commit upstream que introduziu/atualizou o conjunto de manifests. Grave `releaseDateSource) como `manifest) ou `commit). Ajuste manual deve usar `override) e ficar registrado no repositório de overrides.
+
+Vocabulário permitido:
+
+| Campo | Valores |
+|---|---|
+| `releaseDateSource` | `manifest`, `commit`, `override` |
+| `silent.source` | `manifest`, `default`, `override` |
+| `elevation.source` | `manifest`, `inferred`, `override` |
+| `media.icons[].source` | origem identificada, como `winget-legacy), ou `override` |
+
+## 7. Atualizações e cache
+
+Não há imutabilidade obrigatória dos JSON. O WinGet PKGS pode corrigir manifests; o Indexer regenera os JSON e recalcula `detailSha256). O hash identifica os bytes atualmente publicados.
+
+Cache inicial sugerido para JSON: `Cache-Control: public, max-age=300, must-revalidate), com ETag e revalidação condicional. Mídia nomeada com hash pode ter cache longo; ao mudar o conteúdo, mude o nome do arquivo. Preserve extensões corretas de acordo com o formato real e `mimeType).
+
+O Indexer não inclui `generatedAt) nos JSON. Horário de sincronização pertence ao índice/ponteiro raiz.
+
+## 8. Evolução do schema
+
+`schemaVersion) é inteiro. Campo opcional novo não exige incremento. Mudança incompatível exige versão nova e atualização coordenada de Indexer, Worker e clientes. Clientes ignoram campos desconhecidos.
+
+Fora do escopo deste contrato: formato/assinatura do ponteiro raiz, esquema do SQLite `index.db), assinatura de catálogo, formato do repositório de overrides e path layout de fontes diferentes de `winget).
+
+## 9. Checklist de publicação
+
+1. ID e versão validados; caminho calculado pela função compartilhada.
+2. Caixa do ID preservada; caminhos relativos, sem `..), barra inicial ou `\\).
+3. JSON serializado canonicamente e arrays presentes.
+4. Hashes calculados sobre os bytes finais; SHA-256 em minúsculas, 64 caracteres.
+5. `latestVersion === versions[0].version); lista na ordem do Indexer.
+6. Arquiteturas derivadas correspondem aos instaladores.
+7. Vocabulário de procedência validado.
+8. Arquivos de versão publicados antes do produto e do índice raiz.
+
+## Referências oficiais
+
+- [WinGet PKGS: autoria e estrutura de diretórios](https://github.com/microsoft/winget-pkgs/blob/master/doc/Authoring.md)
+- [WinGet PKGS: validação](https://github.com/microsoft/winget-pkgs/blob/master/doc/Validation.md)
+- [Schema atual de manifests do WinGet](https://github.com/microsoft/winget-cli/blob/master/schemas/JSON/manifests/latest/manifest.singleton.latest.json)
+- [Schema multi-file version 1.12.0](https://github.com/microsoft/winget-cli/blob/master/schemas/JSON/manifests/v1.12.0/manifest.version.1.12.0.json)
+
+A estrutura de pastas acima vem do repositório oficial. O formato JSON, serialização canônica, prioridades, projeções e cache são decisões do WinProvision.
