@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import sqlite3
@@ -101,7 +102,8 @@ CREATE TABLE apps (
     icon_path TEXT,
     icon_mime_type TEXT,
     icon_sha256 TEXT,
-    app_path TEXT NOT NULL UNIQUE
+    app_path TEXT NOT NULL UNIQUE,
+    app_sha256 TEXT NOT NULL
 ) STRICT;
 CREATE INDEX idx_apps_name ON apps(name COLLATE NOCASE);
 CREATE INDEX idx_apps_publisher ON apps(publisher COLLATE NOCASE);
@@ -112,7 +114,7 @@ CREATE VIRTUAL TABLE app_search USING fts5(
 """
 
 
-def build_app(conn: sqlite3.Connection, path: str, doc: dict[str, Any]) -> None:
+def build_app(conn: sqlite3.Connection, path: str, doc: dict[str, Any], digest: str) -> None:
     identifier = doc.get("id")
     if not isinstance(identifier, str) or not identifier:
         raise BuildError(f"App sem id: {path}")
@@ -133,14 +135,14 @@ def build_app(conn: sqlite3.Connection, path: str, doc: dict[str, Any]) -> None:
     icon = icons[0] if icons and isinstance(icons[0], dict) else {}
     catalog = doc.get("catalog") or {}
     score = catalog.get("score") if isinstance(catalog, dict) else None
-    conn.execute("""INSERT INTO apps VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+    conn.execute("""INSERT INTO apps VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                  (identifier, doc.get("source", "winget"), package.get("name"),
                   package.get("publisher"), package.get("description"),
                   package.get("longDescription"), package.get("homepage"),
                   package.get("packageUrl"), package.get("moniker"), package.get("locale"),
                   package.get("license"), doc.get("latestVersion"),
                   json_text(architectures), json_text(tags), score, icon.get("path"),
-                  icon.get("mimeType"), icon.get("sha256"), path))
+                  icon.get("mimeType"), icon.get("sha256"), path, digest))
     conn.execute("INSERT INTO app_search VALUES (?, ?, ?, ?, ?, ?)",
                  (identifier, package.get("name") or "", package.get("publisher") or "",
                   package.get("description") or "", package.get("moniker") or "",
@@ -164,7 +166,7 @@ def main() -> int:
         conn.executescript(SCHEMA)
         conn.execute("BEGIN")
         conn.executemany("INSERT INTO metadata VALUES (?, ?)", [
-            ("schemaVersion", "1"), ("sourceRef", SOURCE_REF),
+            ("schemaVersion", "2"), ("sourceRef", SOURCE_REF),
             ("sourceCommit", ref), ("format", "WinProvision Catalog SQLite Index")
         ])
         product_count = version_count = 0
@@ -175,7 +177,7 @@ def main() -> int:
                 raise BuildError(f"JSON inválido em {path}: {error}") from error
             if not isinstance(doc, dict):
                 raise BuildError(f"JSON não é objeto: {path}")
-            build_app(conn, path, doc)
+            build_app(conn, path, doc, hashlib.sha256(raw).hexdigest())
             product_count += 1
             version_count += len(doc["versions"])
             if index % BATCH_SIZE == 0:

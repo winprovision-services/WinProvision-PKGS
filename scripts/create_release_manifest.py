@@ -18,7 +18,7 @@ with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as conn:
         raise SystemExit('Origem ou quantidade não corresponde ao índice')
 with database.open('rb') as stream:
     digest = hashlib.file_digest(stream, 'sha256').hexdigest()
-manifest = {'schemaVersion': 1, 'sourceCommit': expected_commit, 'database': database.name,
+manifest = {'schemaVersion': int(metadata['schemaVersion']), 'sourceCommit': expected_commit, 'database': database.name,
             'sha256': digest, 'sizeBytes': database.stat().st_size,
             'appCount': count, 'versionCount': int(metadata['versionCount'])}
 manifest_path = database.parent / 'catalog-manifest.json'

@@ -73,7 +73,9 @@ jobs:
           RELEASE_DIR: ${{ runner.temp }}/catalog-release
         run: |
           set -euo pipefail
-          tag="catalog-$SOURCE_SHA"
+          # Keep the original catalog-$sha release immutable when rebuilding
+          # that same source commit with a newer SQLite schema.
+          tag="catalog-v2-$SOURCE_SHA"
           if gh release view "$tag" >/dev/null 2>&1; then
             draft="$(gh release view "$tag" --json isDraft -q .isDraft)"
             if [[ "$draft" == false ]]; then
@@ -84,7 +86,7 @@ jobs:
               exit 0
             fi
           else
-            gh release create "$tag" --target "$SOURCE_SHA" --draft --title "Catálogo SQLite ${SOURCE_SHA:0:12}" --notes "Índice gerado a partir do commit $SOURCE_SHA da branch manifests."
+            gh release create "$tag" --target "$SOURCE_SHA" --draft --title "Catálogo SQLite v2 ${SOURCE_SHA:0:12}" --notes "Índice SQLite schema v2 gerado a partir do commit $SOURCE_SHA da branch manifests."
           fi
           gh release upload "$tag" "$RELEASE_DIR/winprovision-catalog.sqlite" "$RELEASE_DIR/catalog-manifest.json" "$RELEASE_DIR/SHA256SUMS" --clobber
           gh release edit "$tag" --draft=false --latest=false

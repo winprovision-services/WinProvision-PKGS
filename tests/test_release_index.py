@@ -1,4 +1,5 @@
 import json
+import hashlib
 from contextlib import closing
 import os
 from pathlib import Path
@@ -28,6 +29,7 @@ class ReleaseIndexTests(unittest.TestCase):
                    'latestVersion': '1', 'versions': [{'version': '1'}],
                    'media': {'icons': [{'path': 'media/icon.aaaaaaaa.png', 'sha256': 'a' * 64, 'mimeType': 'image/png'}]}}
             app.write_text(json.dumps(doc), encoding='utf-8')
+            expected_hash = hashlib.sha256(app.read_bytes()).hexdigest()
             subprocess.run(['git', '-C', str(root), 'add', 'c'], check=True)
             subprocess.run(['git', '-C', str(root), 'commit', '-qm', 'first'], check=True)
             commit = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
@@ -39,12 +41,17 @@ class ReleaseIndexTests(unittest.TestCase):
             subprocess.run([sys.executable, str(scripts / 'build_release_index.py')], env=env, check=True, capture_output=True)
             with closing(sqlite3.connect(db)) as conn:
                 self.assertEqual(conn.execute('select name, icon_sha256 from apps').fetchone(), ('Café App', 'a' * 64))
+                self.assertEqual(conn.execute('select app_sha256 from apps').fetchone()[0], expected_hash)
+                self.assertIn('app_sha256', {row[1] for row in conn.execute('pragma table_info(apps)')})
                 self.assertEqual(conn.execute("select id from app_search where app_search match 'cafe'").fetchone()[0], 'Contoso.App')
-                self.assertEqual(dict(conn.execute('select * from metadata'))['sourceCommit'], commit)
+                metadata = dict(conn.execute('select * from metadata'))
+                self.assertEqual(metadata['sourceCommit'], commit)
+                self.assertEqual(metadata['schemaVersion'], '2')
             subprocess.run([sys.executable, str(SCRIPTS / 'create_release_manifest.py'), str(db), commit], check=True)
             subprocess.run([sys.executable, str(SCRIPTS / 'verify_release_manifest.py'), str(db.parent), commit], check=True)
             manifest = db.parent / 'catalog-manifest.json'
             metadata = json.loads(manifest.read_text())
+            self.assertEqual(metadata['schemaVersion'], 2)
             metadata['sha256'] = '0' * 64
             manifest.write_text(json.dumps(metadata))
             result = subprocess.run([sys.executable, str(SCRIPTS / 'verify_release_manifest.py'), str(db.parent), commit], capture_output=True)
