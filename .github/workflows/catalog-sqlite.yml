@@ -1,0 +1,90 @@
+name: Publicar índice SQLite do catálogo
+
+on:
+  push:
+    branches: [manifests]
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Commit completo da branch manifests (vazio usa o atual)
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: catalog-sqlite-${{ inputs.source_commit || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Obter gerador da branch principal
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: true
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Testar gerador e verificação
+        run: python -m unittest discover -s tests -v
+
+      - name: Fixar o commit do catálogo
+        id: source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_SHA: ${{ github.sha }}
+          INPUT_SHA: ${{ inputs.source_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "$INPUT_SHA" ]]; then
+            sha="$INPUT_SHA"
+          elif [[ "$EVENT_NAME" == push ]]; then
+            sha="$PUSH_SHA"
+          else
+            sha="$(git ls-remote origin refs/heads/manifests | cut -f1)"
+          fi
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'Commit inválido' >&2; exit 1; }
+          git fetch --no-tags --depth=1 origin "$sha"
+          [[ "$(git rev-parse FETCH_HEAD)" == "$sha" ]]
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Gerar e validar o índice
+        env:
+          CATALOG_REF: ${{ steps.source.outputs.sha }}
+          INDEX_DB_PATH: ${{ runner.temp }}/catalog-release/winprovision-catalog.sqlite
+        run: |
+          set -euo pipefail
+          python scripts/build_release_index.py
+          python scripts/create_release_manifest.py "$INDEX_DB_PATH" "$CATALOG_REF"
+
+      - name: Publicar release por commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          RELEASE_DIR: ${{ runner.temp }}/catalog-release
+        run: |
+          set -euo pipefail
+          tag="catalog-$SOURCE_SHA"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            draft="$(gh release view "$tag" --json isDraft -q .isDraft)"
+            if [[ "$draft" == false ]]; then
+              mkdir -p "$RUNNER_TEMP/existing-release"
+              gh release download "$tag" --dir "$RUNNER_TEMP/existing-release" --pattern 'winprovision-catalog.sqlite' --pattern 'catalog-manifest.json' --pattern 'SHA256SUMS'
+              (cd "$RUNNER_TEMP/existing-release" && sha256sum -c SHA256SUMS)
+              python scripts/verify_release_manifest.py "$RUNNER_TEMP/existing-release" "$SOURCE_SHA"
+              exit 0
+            fi
+          else
+            gh release create "$tag" --target "$SOURCE_SHA" --draft --title "Catálogo SQLite ${SOURCE_SHA:0:12}" --notes "Índice gerado a partir do commit $SOURCE_SHA da branch manifests."
+          fi
+          gh release upload "$tag" "$RELEASE_DIR/winprovision-catalog.sqlite" "$RELEASE_DIR/catalog-manifest.json" "$RELEASE_DIR/SHA256SUMS" --clobber
+          gh release edit "$tag" --draft=false --latest=false

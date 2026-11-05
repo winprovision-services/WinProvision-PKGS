@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: winget-pkgs-manifest-sync
@@ -37,9 +38,22 @@ jobs:
         run: python -m pip install -r scripts/requirements-sync.txt
 
       - name: Apply upstream diff to manifests branch
+        id: sync
         env:
           CATALOG_BRANCH: manifests
           UPSTREAM_REPOSITORY: microsoft/winget-pkgs
           UPSTREAM_REF: master
           MAX_UPSTREAM_COMMITS_PER_RUN: "500"
         run: python scripts/sync_winget_pkgs.py
+
+      - name: Solicitar índice da atualização publicada
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CATALOG_COMMIT: ${{ steps.sync.outputs.catalog_commit }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$CATALOG_COMMIT" ]]; then
+            CATALOG_COMMIT="$(git ls-remote origin refs/heads/manifests | cut -f1)"
+          fi
+          [[ "$CATALOG_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          gh workflow run catalog-sqlite.yml --ref main -f source_commit="$CATALOG_COMMIT"

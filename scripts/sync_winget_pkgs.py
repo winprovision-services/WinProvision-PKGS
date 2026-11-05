@@ -851,6 +851,9 @@ def main() -> int:
                              state, batch_head)
             if commit:
                 log(f"Publicado commit {commit} na branch {CATALOG_BRANCH}.")
+                if os.environ.get("GITHUB_OUTPUT"):
+                    with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                        output.write(f"catalog_commit={commit}\n")
             else:
                 log("Conteúdo já estava sincronizado; nenhum commit criado.")
             if more_pending:
