@@ -411,7 +411,7 @@ def build_version(upstream: Path, upstream_commit: str, folder: str,
 
     version_docs = [entry for entry in docs if entry[1].get("ManifestType", "").lower() == "version"]
     installer_docs = [entry for entry in docs if entry[1].get("ManifestType", "").lower() == "installer"]
-    locale_docs = [entry for entry in docs if entry[1].get("ManifestType", "").lower() == "locale"]
+    locale_docs = [entry for entry in docs if entry[1].get("ManifestType", "").lower() in {"locale", "defaultlocale"}]
     if len(version_docs) != 1 or len(installer_docs) != 1:
         raise SyncError(f"Conjunto de manifestos incompleto para {expected_id} {expected_version}: "
                         f"version={len(version_docs)}, installer={len(installer_docs)}")
