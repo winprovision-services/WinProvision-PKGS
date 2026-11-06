@@ -1,6 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -9,6 +10,12 @@ import sync_winget_pkgs as sync  # noqa: E402
 
 
 class InstallerProjectionTests(unittest.TestCase):
+    def test_cat_files_skips_non_blob_objects_without_desynchronizing_batch(self):
+        response = b"a" * 40 + b" commit 3\nabc\n" + b"b" * 40 + b" blob 3\nxyz\n"
+        with patch.object(sync, "git", return_value=response):
+            files = sync.cat_files(Path("."), "c" * 40, ["manifests/a/link.yaml", "manifests/b/file.yaml"])
+        self.assertEqual(files, {"manifests/b/file.yaml": b"xyz"})
+
     def test_inherits_root_installer_type_and_allows_item_override(self):
         installer = sync.convert_installer({
             "InstallerType": "msi",

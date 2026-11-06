@@ -171,12 +171,16 @@ def cat_files(repo: Path, commit: str, paths: Iterable[str]) -> dict[str, bytes]
         cursor = line_end + 1
         if len(header) == 2 and header[1] == b"missing":
             continue
-        if len(header) != 3 or header[1] != b"blob":
+        if len(header) != 3:
             raise SyncError(f"Objeto Git não é blob para {path}")
         size = int(header[2])
         end = cursor + size
         if end >= len(output) or output[end:end + 1] != b"\n":
             raise SyncError(f"Conteúdo incompleto para {path}")
+        if header[1] != b"blob":
+            log(f"Ignorando objeto upstream não blob ({header[1].decode('ascii', 'replace')}) em {path}")
+            cursor = end + 1
+            continue
         contents[path] = output[cursor:end]
         cursor = end + 1
     return contents
