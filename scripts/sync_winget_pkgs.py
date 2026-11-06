@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 from typing import Any, Iterable
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import yaml
 
@@ -323,6 +323,26 @@ def uninstall_entry(installer: dict[str, Any]) -> dict[str, str] | None:
     return None
 
 
+def resolve_installer_type(raw: dict[str, Any]) -> str:
+    value = raw.get("InstallerType")
+    if isinstance(value, str) and value.strip():
+        return value.strip().lower()
+
+    # InstallerType is omitted by some older or compact WinGet manifests.
+    # Recover strong file-format signals from the URL; otherwise WinGet treats
+    # an unspecified installer as a generic executable installer.
+    url = raw.get("InstallerUrl")
+    path = urlsplit(url).path.lower() if isinstance(url, str) else ""
+    for suffix, inferred in (
+        (".msixbundle", "msix"), (".appxbundle", "appx"),
+        (".msix", "msix"), (".appx", "appx"),
+        (".msi", "msi"), (".zip", "zip"),
+    ):
+        if path.endswith(suffix):
+            return inferred
+    return "exe"
+
+
 def convert_installer(raw: dict[str, Any], seen_ids: dict[str, int]) -> dict[str, Any]:
     installer: dict[str, Any] = {}
     for key, value in raw.items():
@@ -335,10 +355,10 @@ def convert_installer(raw: dict[str, Any], seen_ids: dict[str, int]) -> dict[str
     if architecture not in ALLOWED_ARCHITECTURES:
         raise SyncError(f"Arquitetura WinGet não suportada: {architecture}")
     installer["architecture"] = architecture
-    installer_type = str(raw.get("InstallerType", "")).lower()
-    if installer_type not in ALLOWED_INSTALLER_TYPES:
-        raise SyncError(f"InstallerType WinGet não suportado: {installer_type!r}")
-    installer["type"] = installer_type
+    resolved_installer_type = resolve_installer_type(raw)
+    if resolved_installer_type not in ALLOWED_INSTALLER_TYPES:
+        raise SyncError(f"InstallerType WinGet não suportado: {resolved_installer_type!r}")
+    installer["type"] = resolved_installer_type
     url = raw.get("InstallerUrl")
     digest = raw.get("InstallerSha256")
     if not isinstance(url, str) or not re.match(r"^https?://", url, re.IGNORECASE):
@@ -350,12 +370,12 @@ def convert_installer(raw: dict[str, Any], seen_ids: dict[str, int]) -> dict[str
     if "Scope" in raw:
         installer["scope"] = str(raw["Scope"]).lower()
 
-    installer["priority"] = PRIORITY.get(installer_type, 5)
+    installer["priority"] = PRIORITY.get(resolved_installer_type, 5)
     base_parts = [architecture]
     scope = installer.get("scope")
     if scope:
         base_parts.append(scope)
-    base_parts.append(installer_type)
+    base_parts.append(resolved_installer_type)
     base_id = "-".join(base_parts)
     seen_ids[base_id] = seen_ids.get(base_id, 0) + 1
     installer["id"] = base_id if seen_ids[base_id] == 1 else f"{base_id}-{seen_ids[base_id]}"
@@ -366,7 +386,7 @@ def convert_installer(raw: dict[str, Any], seen_ids: dict[str, int]) -> dict[str
     silent = switches.get("Silent") or switches.get("SilentWithProgress")
     source = "manifest"
     if not silent:
-        silent = default_silent(installer_type)
+        silent = default_silent(resolved_installer_type)
         source = "default"
     if silent:
         installer["silent"] = {"arguments": silent, "source": source}
@@ -439,7 +459,16 @@ def build_version(upstream: Path, upstream_commit: str, folder: str,
     seen_ids: dict[str, int] = {}
     if any(not isinstance(item, dict) for item in raw_installers):
         raise SyncError(f"Entrada de instalador inválida em {expected_id} {expected_version}")
-    installers = [convert_installer(item, seen_ids) for item in raw_installers]
+    inherited_installer_fields = {
+        key: installer_doc[key] for key in INSTALLER_KEY_MAP if key in installer_doc
+    }
+    try:
+        installers = [
+            convert_installer({**inherited_installer_fields, **item}, seen_ids)
+            for item in raw_installers
+        ]
+    except SyncError as error:
+        raise SyncError(f"Manifesto installer {installer_docs[0][0]}: {error}") from error
     if not installers:
         raise SyncError(f"Nenhum instalador válido em {expected_id} {expected_version}")
 

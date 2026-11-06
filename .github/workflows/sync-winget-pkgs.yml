@@ -37,6 +37,9 @@ jobs:
       - name: Install synchronizer dependency
         run: python -m pip install -r scripts/requirements-sync.txt
 
+      - name: Test synchronizer and release index
+        run: python -m unittest discover -s tests -v
+
       - name: Apply upstream diff to manifests branch
         id: sync
         env:
