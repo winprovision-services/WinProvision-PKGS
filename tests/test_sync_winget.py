@@ -10,6 +10,13 @@ import sync_winget_pkgs as sync  # noqa: E402
 
 
 class InstallerProjectionTests(unittest.TestCase):
+    def test_yaml_document_preserves_unquoted_win_get_version_text(self):
+        document = sync.yaml_document(
+            b"PackageIdentifier: JonathanMarler.msvcup\nPackageVersion: 2026_11_02\n",
+            "manifest.yaml",
+        )
+        self.assertEqual(document["PackageVersion"], "2026_11_02")
+
     def test_cat_files_skips_non_blob_objects_without_desynchronizing_batch(self):
         link_oid = "a" * 40
         file_oid = "b" * 40

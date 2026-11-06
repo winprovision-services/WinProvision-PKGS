@@ -269,10 +269,19 @@ def encoded_version(version: str) -> str:
 def yaml_document(data: bytes, source_path: str) -> dict[str, Any]:
     try:
         loaded = yaml.safe_load(data)
+        root = yaml.compose(data)
     except yaml.YAMLError as error:
         raise SyncError(f"YAML inválido em {source_path}: {error}") from error
     if not isinstance(loaded, dict):
         raise SyncError(f"Manifesto YAML não é um objeto: {source_path}")
+    # PyYAML follows YAML 1.1 implicit numeric rules, so an unquoted WinGet
+    # version such as 2026_11_02 becomes integer 20261102. The schema defines
+    # PackageVersion as a string; preserve its scalar spelling from the node.
+    if isinstance(root, yaml.MappingNode):
+        version_node = next((value for key, value in root.value
+                             if isinstance(key, yaml.ScalarNode) and key.value == "PackageVersion"), None)
+        if isinstance(version_node, yaml.ScalarNode):
+            loaded["PackageVersion"] = version_node.value
     identifier = loaded.get("PackageIdentifier")
     version = loaded.get("PackageVersion")
     if not isinstance(identifier, str) or not isinstance(version, str):
