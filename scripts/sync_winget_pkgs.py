@@ -151,36 +151,58 @@ def git_ref(repo: Path, ref: str) -> str:
 
 
 def cat_files(repo: Path, commit: str, paths: Iterable[str]) -> dict[str, bytes]:
-    """Read many tree paths in one cat-file process; missing paths are omitted."""
+    """Read many tree paths by object ID; missing paths are omitted."""
     unique = list(dict.fromkeys(paths))
     if not unique:
         return {}
-    refs: list[str] = []
+    object_types: dict[str, tuple[str, str]] = {}
+    for offset in range(0, len(unique), 200):
+        chunk = unique[offset:offset + 200]
+        for path in chunk:
+            if "\n" in path or "\r" in path or "\x00" in path:
+                raise SyncError(f"Caminho upstream inválido: {path!r}")
+        pathspecs = [f":(literal){path}" for path in chunk]
+        raw_tree = git(repo, "ls-tree", "-r", "-z", commit, "--", *pathspecs)
+        for record in raw_tree.split(b"\0"):
+            if not record:
+                continue
+            metadata, separator, raw_path = record.partition(b"\t")
+            fields = metadata.split()
+            if not separator or len(fields) != 3:
+                raise SyncError("Resposta incompleta de git ls-tree -z")
+            path = raw_path.decode("utf-8", "strict")
+            object_types[path] = (fields[1].decode("ascii"), fields[2].decode("ascii"))
+
+    blob_paths: list[str] = []
+    object_ids: list[str] = []
     for path in unique:
-        if "\n" in path or "\r" in path or "\x00" in path:
-            raise SyncError(f"Caminho upstream inválido: {path!r}")
-        refs.append(f"{commit}:{path}")
-    output = git(repo, "cat-file", "--batch", input_bytes=("\n".join(refs) + "\n").encode())
+        tree_object = object_types.get(path)
+        if tree_object is None:
+            continue
+        object_type, object_id = tree_object
+        if object_type != "blob":
+            log(f"Ignorando objeto upstream não blob ({object_type}) em {path}")
+            continue
+        blob_paths.append(path)
+        object_ids.append(object_id)
+    if not object_ids:
+        return {}
+
+    output = git(repo, "cat-file", "--batch", input_bytes=("\n".join(object_ids) + "\n").encode())
     cursor = 0
     contents: dict[str, bytes] = {}
-    for path in unique:
+    for path, object_id in zip(blob_paths, object_ids):
         line_end = output.find(b"\n", cursor)
         if line_end < 0:
             raise SyncError("Resposta incompleta de git cat-file --batch")
         header = output[cursor:line_end].split()
         cursor = line_end + 1
-        if len(header) == 2 and header[1] == b"missing":
-            continue
-        if len(header) != 3:
-            raise SyncError(f"Objeto Git não é blob para {path}")
+        if len(header) != 3 or header[0].decode("ascii") != object_id or header[1] != b"blob":
+            raise SyncError(f"Objeto Git inválido para {path}")
         size = int(header[2])
         end = cursor + size
         if end >= len(output) or output[end:end + 1] != b"\n":
             raise SyncError(f"Conteúdo incompleto para {path}")
-        if header[1] != b"blob":
-            log(f"Ignorando objeto upstream não blob ({header[1].decode('ascii', 'replace')}) em {path}")
-            cursor = end + 1
-            continue
         contents[path] = output[cursor:end]
         cursor = end + 1
     return contents

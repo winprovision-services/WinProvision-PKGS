@@ -11,10 +11,16 @@ import sync_winget_pkgs as sync  # noqa: E402
 
 class InstallerProjectionTests(unittest.TestCase):
     def test_cat_files_skips_non_blob_objects_without_desynchronizing_batch(self):
-        response = b"a" * 40 + b" commit 3\nabc\n" + b"b" * 40 + b" blob 3\nxyz\n"
-        with patch.object(sync, "git", return_value=response):
-            files = sync.cat_files(Path("."), "c" * 40, ["manifests/a/link.yaml", "manifests/b/file.yaml"])
-        self.assertEqual(files, {"manifests/b/file.yaml": b"xyz"})
+        link_oid = "a" * 40
+        file_oid = "b" * 40
+        tree = (f"160000 commit {link_oid}\tmanifests/a/link.yaml\0"
+                f"100644 blob {file_oid}\tmanifests/b/file with spaces.yaml\0").encode()
+        content = f"{file_oid} blob 3\nxyz\n".encode()
+        with patch.object(sync, "git", side_effect=[tree, content]) as mocked_git:
+            files = sync.cat_files(Path("."), "c" * 40,
+                                   ["manifests/a/link.yaml", "manifests/b/file with spaces.yaml"])
+        self.assertEqual(files, {"manifests/b/file with spaces.yaml": b"xyz"})
+        self.assertEqual(mocked_git.call_args_list[1].kwargs["input_bytes"], f"{file_oid}\n".encode())
 
     def test_inherits_root_installer_type_and_allows_item_override(self):
         installer = sync.convert_installer({
